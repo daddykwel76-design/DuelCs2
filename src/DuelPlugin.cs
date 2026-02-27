@@ -408,21 +408,20 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        var zoneName = info.GetArg(1).Trim();
         if (!_zones.TryGetValue(zoneName, out var zone))
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Zone introuvable. Créez-la d'abord avec !duel_zone_create.");
             return;
         }
 
-        var team = ParseTeam(info.GetArg(2));
+        var team = ParseTeam(info.GetArg(argumentOffset + 1));
         if (team == DuelTeam.None)
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Team invalide: utilisez a ou b.");
             return;
         }
 
-        if (!int.TryParse(info.GetArg(3), out var slot) || slot is < 1 or > 3)
+        if (!int.TryParse(info.GetArg(argumentOffset + 2), out var slot) || slot is < 1 or > 3)
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Slot invalide: utilisez 1, 2 ou 3.");
             return;
