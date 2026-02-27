@@ -33,6 +33,16 @@ Commandes utiles:
 
 Une zone est considérée **prête** quand les 6 spawns sont définis.
 
+## Sauvegarde des zones/spawns
+
+Les zones et leurs spawns sont sauvegardés automatiquement **par map** à chaque création/suppression de zone ou modification de spawn.
+
+Chemin de sauvegarde:
+
+- `configs/DuelCs2/zones/<nom_de_la_map>.json` (relatif au dossier d'exécution du serveur/plugin)
+
+Au chargement de la map, le plugin recharge le fichier JSON correspondant à cette map.
+
 ## Mode duel global (admin)
 
 Quand un admin lance le mode duel global:

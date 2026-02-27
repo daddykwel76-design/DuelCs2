@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Commands;
@@ -42,6 +43,11 @@ public sealed class DuelPlugin : BasePlugin
     private bool _globalDuelModeEnabled;
     private string _selectedWeapon = AllowedWeapons[0];
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
     public override void Load(bool hotReload)
     {
         AddCommand("css_duel", "Lancer une demande de duel: !duel <nom>", CommandDuel);
@@ -56,6 +62,14 @@ public sealed class DuelPlugin : BasePlugin
         AddCommand("css_duel_zone_delete", "Supprimer une zone de duel", CommandZoneDelete);
         AddCommand("css_duel_zone_list", "Lister les zones de duel", CommandZoneList);
         AddCommand("css_duel_zone_setspawn", "Définir un spawn de zone", CommandZoneSetSpawn);
+
+        RegisterListener<Listeners.OnMapStart>(OnMapStart);
+        LoadZoneConfigurationForCurrentMap();
+    }
+
+    private void OnMapStart(string _)
+    {
+        LoadZoneConfigurationForCurrentMap();
     }
 
     private void CommandDuelModeStart(CCSPlayerController? caller, CommandInfo info)
@@ -333,6 +347,7 @@ public sealed class DuelPlugin : BasePlugin
         }
 
         _zones[zoneName] = new DuelZone(zoneName);
+        SaveZoneConfigurationForCurrentMap();
         caller!.PrintToChat($"\x07[DUEL]\x01 Zone '{zoneName}' créée. Définissez ensuite 3 spawns pour A et 3 pour B.");
     }
 
@@ -356,6 +371,7 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
+        SaveZoneConfigurationForCurrentMap();
         caller!.PrintToChat($"\x07[DUEL]\x01 Zone '{zoneName}' supprimée.");
     }
 
@@ -450,6 +466,7 @@ public sealed class DuelPlugin : BasePlugin
         }
 
         zone.SetSpawn(team, slot - 1, new DuelSpawn(x, y, z, pitch, yaw, roll));
+        SaveZoneConfigurationForCurrentMap();
         caller!.PrintToChat($"\x07[DUEL]\x01 Spawn défini: zone {zoneName}, team {info.GetArg(2).ToUpperInvariant()}, slot {slot}.");
     }
 
