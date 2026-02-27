@@ -121,6 +121,13 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
+        var availablePlayers = GetAvailablePlayers();
+        if (availablePlayers.Count == 1 && availablePlayers[0].SteamID == caller!.SteamID)
+        {
+            StartSoloDuelWithBot(caller);
+            return;
+        }
+
         if (info.ArgCount < 2)
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel <nom>.");
@@ -152,7 +159,7 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        var availableCount = GetAvailablePlayers().Count;
+        var availableCount = availablePlayers.Count;
         var format = DuelFormatExtensions.SelectForPlayerCount(availableCount);
         if (format is null)
         {
@@ -172,6 +179,56 @@ public sealed class DuelPlugin : BasePlugin
         target.PrintToChat($"\x07[DUEL]\x01 {caller.PlayerName} vous défie ! Format: {DuelFormatExtensions.Label(format.Value)}, zone: {zoneName}. Tapez !duel_accept ou !duel_deny.");
 
         AddTimer(DuelRequestTimeoutSeconds, () => ExpireRequest(target.SteamID), TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
+    private void StartSoloDuelWithBot(CCSPlayerController caller)
+    {
+        if (!TryPickReadyZone(out var zoneName))
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Aucune zone prête. Créez une zone puis définissez 3 spawns pour team A et 3 pour team B.");
+            return;
+        }
+
+        var bot = FindAliveBot();
+        if (bot is not null)
+        {
+            StartDuelRound(DuelFormat.OneVsOne, zoneName, new List<CCSPlayerController> { caller }, new List<CCSPlayerController> { bot }, isRematch: false);
+            return;
+        }
+
+        caller.PrintToChat("\x07[DUEL]\x01 Vous êtes seul: création d'un bot adverse...");
+        Server.ExecuteCommand("bot_add");
+
+        AddTimer(1.0f, () => TryStartSoloDuelAfterBotSpawn(caller.SteamID, zoneName), TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
+    private void TryStartSoloDuelAfterBotSpawn(ulong playerSteamId, string zoneName)
+    {
+        var caller = FindPlayer(playerSteamId);
+        if (!IsValidPlayer(caller, requireAlive: true) || caller is null)
+        {
+            return;
+        }
+
+        if (IsInDuel(caller))
+        {
+            return;
+        }
+
+        var bot = FindAliveBot();
+        if (bot is null)
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Impossible de créer un bot pour le duel (vérifiez la configuration du serveur).");
+            return;
+        }
+
+        if (!_zones.TryGetValue(zoneName, out var zone) || !zone.IsReady)
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Zone du duel indisponible ou incomplète.");
+            return;
+        }
+
+        StartDuelRound(DuelFormat.OneVsOne, zoneName, new List<CCSPlayerController> { caller }, new List<CCSPlayerController> { bot }, isRematch: false);
     }
 
     private void CommandAccept(CCSPlayerController? caller, CommandInfo _)
@@ -686,6 +743,11 @@ public sealed class DuelPlugin : BasePlugin
     private CCSPlayerController? FindPlayer(ulong steamId)
     {
         return Utilities.GetPlayers().FirstOrDefault(p => IsValidPlayer(p) && p.SteamID == steamId);
+    }
+
+    private static CCSPlayerController? FindAliveBot()
+    {
+        return Utilities.GetPlayers().FirstOrDefault(p => p is { IsValid: true, IsBot: true, PawnIsAlive: true });
     }
 
     private bool IsInDuel(CCSPlayerController player)
