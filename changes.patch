@@ -1,8 +1,67 @@
 diff --git a/README.md b/README.md
-index 0e92f3beff9f747b5273fed746a6350919155623..9166cba3b582daf5cb3e6ff8fada9b84c5e25c34 100644
+index 0e92f3beff9f747b5273fed746a6350919155623..f78ce393e4e1d179274aa96f126efe142e80bb7a 100644
 --- a/README.md
 +++ b/README.md
-@@ -42,35 +42,36 @@ Quand un admin lance le mode duel global:
+@@ -1,76 +1,89 @@
+ # DuelCs2
+ 
+ Plugin CounterStrikeSharp pour CS2 permettant d'organiser des duels dynamiques avec les joueurs présents sur le serveur.
+ 
+ ## Formats automatiques
+ 
+ Le format est choisi automatiquement selon le nombre de joueurs vivants et disponibles:
+ 
+ - 2 joueurs: `1v1`
+ - 3 joueurs: `1v2`
+ - 4 joueurs: `2v2`
+ - 5 joueurs ou plus: `3v2`
+ 
+ ## Configuration des zones (obligatoire)
+ 
+ La configuration commence par la **création d'une zone**, puis la définition de **3 spawns par équipe**:
+ 
+ 1. `!duel_zone_create <nom_zone>`
+ 2. Définir les spawns de la zone:
+-   - `!duel_zone_setspawn <nom_zone> a 1 <x> <y> <z> [pitch] [yaw] [roll]`
+-   - `!duel_zone_setspawn <nom_zone> a 2 <x> <y> <z> [pitch] [yaw] [roll]`
+-   - `!duel_zone_setspawn <nom_zone> a 3 <x> <y> <z> [pitch] [yaw] [roll]`
+-   - `!duel_zone_setspawn <nom_zone> b 1 <x> <y> <z> [pitch] [yaw] [roll]`
+-   - `!duel_zone_setspawn <nom_zone> b 2 <x> <y> <z> [pitch] [yaw] [roll]`
+-   - `!duel_zone_setspawn <nom_zone> b 3 <x> <y> <z> [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> a 1 [x y z] [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> a 2 [x y z] [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> a 3 [x y z] [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> b 1 [x y z] [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> b 2 [x y z] [pitch] [yaw] [roll]`
++   - `!duel_zone_setspawn <nom_zone> b 3 [x y z] [pitch] [yaw] [roll]`
++
++   Si `x y z` ne sont pas fournis, le plugin utilise automatiquement votre position et votre orientation actuelles.
+ 
+ Commandes utiles:
+ 
+ - `!duel_zone_list`
+ - `!duel_zone_delete <nom_zone>`
+ 
+ Une zone est considérée **prête** quand les 6 spawns sont définis.
+ 
++## Sauvegarde des zones/spawns
++
++Les zones et leurs spawns sont sauvegardés automatiquement **par map** à chaque création/suppression de zone ou modification de spawn.
++
++Chemin de sauvegarde:
++
++- `configs/DuelCs2/zones/<nom_de_la_map>.json` (relatif au dossier d'exécution du serveur/plugin)
++
++Au chargement de la map, le plugin recharge le fichier JSON correspondant à cette map.
++
+ ## Mode duel global (admin)
+ 
+ Quand un admin lance le mode duel global:
+ 
+ - le mode duel est appliqué à tous les joueurs vivants présents;
+ - un choix d'arme commune est proposé puis appliqué à tous;
+ - à chaque nouvelle manche duel, chaque joueur reçoit une utility aléatoire.
+ 
  Commandes:
  
  - `!duel_mode_start` : affiche la liste des armes disponibles.
@@ -40,10 +99,108 @@ index 0e92f3beff9f747b5273fed746a6350919155623..9166cba3b582daf5cb3e6ff8fada9b84
  dotnet build
  ```
 diff --git a/src/DuelPlugin.cs b/src/DuelPlugin.cs
-index dde60fc0d9f9d8ef37c097ea5972b9a4f1727933..7a220b9997d6199cc74f48b575501fc73e298aef 100644
+index dde60fc0d9f9d8ef37c097ea5972b9a4f1727933..6fde0cc4046617e98acacd7a91ff336a3138ee30 100644
 --- a/src/DuelPlugin.cs
 +++ b/src/DuelPlugin.cs
-@@ -99,103 +99,160 @@ public sealed class DuelPlugin : BasePlugin
+@@ -1,83 +1,97 @@
+ using System.Reflection;
++using System.Text.Json;
+ using CounterStrikeSharp.API;
+ using CounterStrikeSharp.API.Core;
+ using CounterStrikeSharp.API.Modules.Commands;
+ using CounterStrikeSharp.API.Modules.Timers;
+ using CounterStrikeSharp.API.Modules.Utils;
+ 
+ namespace DuelCs2;
+ 
+ public sealed class DuelPlugin : BasePlugin
+ {
+     public override string ModuleName => "Duel CS2";
+     public override string ModuleVersion => "1.4.0";
+     public override string ModuleAuthor => "Codex";
+     public override string ModuleDescription => "Duels dynamiques globaux/personnalisés sur zones configurées.";
+ 
+     private const float DuelRequestTimeoutSeconds = 20.0f;
+     private const float DuelDurationSeconds = 45.0f;
+ 
+     private static readonly string[] AllowedWeapons =
+     {
+         "weapon_ak47",
+         "weapon_m4a1",
+         "weapon_awp",
+         "weapon_deagle",
+         "weapon_ssg08"
+     };
+ 
+     private static readonly string[] UtilityPool =
+     {
+         "weapon_hegrenade",
+         "weapon_flashbang",
+         "weapon_smokegrenade",
+         "weapon_molotov",
+         "weapon_incgrenade"
+     };
+ 
+     private readonly Dictionary<ulong, DuelRequest> _pendingRequests = new();
+     private readonly HashSet<ulong> _playersInDuel = new();
+     private readonly Dictionary<string, DuelZone> _zones = new(StringComparer.OrdinalIgnoreCase);
+ 
+     private bool _globalDuelModeEnabled;
+     private string _selectedWeapon = AllowedWeapons[0];
+ 
++    private static readonly JsonSerializerOptions JsonOptions = new()
++    {
++        WriteIndented = true
++    };
++
+     public override void Load(bool hotReload)
+     {
+         AddCommand("css_duel", "Lancer une demande de duel: !duel <nom>", CommandDuel);
+         AddCommand("css_duel_accept", "Accepter un duel: !duel_accept", CommandAccept);
+         AddCommand("css_duel_deny", "Refuser un duel: !duel_deny", CommandDeny);
+         AddCommand("css_duel_cancel", "Annuler votre demande de duel", CommandCancel);
+ 
+         AddCommand("css_duel_mode_start", "Activer le mode duel global", CommandDuelModeStart);
+         AddCommand("css_duel_mode_stop", "Désactiver le mode duel global", CommandDuelModeStop);
+ 
+         AddCommand("css_duel_zone_create", "Créer une zone de duel", CommandZoneCreate);
+         AddCommand("css_duel_zone_delete", "Supprimer une zone de duel", CommandZoneDelete);
+         AddCommand("css_duel_zone_list", "Lister les zones de duel", CommandZoneList);
+         AddCommand("css_duel_zone_setspawn", "Définir un spawn de zone", CommandZoneSetSpawn);
++
++        RegisterListener<Listeners.OnMapStart>(OnMapStart);
++        LoadZoneConfigurationForCurrentMap();
++    }
++
++    private void OnMapStart(string _)
++    {
++        LoadZoneConfigurationForCurrentMap();
+     }
+ 
+     private void CommandDuelModeStart(CCSPlayerController? caller, CommandInfo info)
+     {
+         if (!IsValidPlayer(caller) && caller is not null)
+         {
+             return;
+         }
+ 
+         if (!TryPickReadyZone(out var zoneName))
+         {
+             caller?.PrintToChat("\x07[DUEL]\x01 Aucune zone prête. Configurez d'abord une zone complète.");
+             return;
+         }
+ 
+         if (info.ArgCount < 2)
+         {
+             ShowWeaponChoices(caller);
+             caller?.PrintToChat("\x07[DUEL]\x01 Relancez: !duel_mode_start <index_arme|nom_arme>. Ex: !duel_mode_start 1");
+             return;
+         }
+ 
+         if (!TryParseWeapon(info.GetArg(1), out var weapon))
+         {
+             ShowWeaponChoices(caller);
+@@ -99,103 +113,160 @@ public sealed class DuelPlugin : BasePlugin
          _globalDuelModeEnabled = false;
          _pendingRequests.Clear();
          Server.PrintToChatAll("\x07[DUEL]\x01 Mode duel global désactivé.");
@@ -205,7 +362,188 @@ index dde60fc0d9f9d8ef37c097ea5972b9a4f1727933..7a220b9997d6199cc74f48b575501fc7
          {
              caller.PrintToChat("\x07[DUEL]\x01 Zone du duel indisponible ou incomplète.");
              _pendingRequests.Remove(caller.SteamID);
-@@ -666,50 +723,55 @@ public sealed class DuelPlugin : BasePlugin
+@@ -254,141 +325,170 @@ public sealed class DuelPlugin : BasePlugin
+         caller!.PrintToChat("\x07[DUEL]\x01 Votre demande de duel a été annulée.");
+         target?.PrintToChat($"\x07[DUEL]\x01 {caller.PlayerName} a annulé sa demande de duel.");
+     }
+ 
+     private void CommandZoneCreate(CCSPlayerController? caller, CommandInfo info)
+     {
+         if (!IsValidPlayer(caller))
+         {
+             return;
+         }
+ 
+         if (info.ArgCount < 2)
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_create <nom_zone>");
+             return;
+         }
+ 
+         var zoneName = info.GetArg(1).Trim();
+         if (_zones.ContainsKey(zoneName))
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Cette zone existe déjà.");
+             return;
+         }
+ 
+         _zones[zoneName] = new DuelZone(zoneName);
++        SaveZoneConfigurationForCurrentMap();
+         caller!.PrintToChat($"\x07[DUEL]\x01 Zone '{zoneName}' créée. Définissez ensuite 3 spawns pour A et 3 pour B.");
+     }
+ 
+     private void CommandZoneDelete(CCSPlayerController? caller, CommandInfo info)
+     {
+         if (!IsValidPlayer(caller))
+         {
+             return;
+         }
+ 
+         if (info.ArgCount < 2)
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_delete <nom_zone>");
+             return;
+         }
+ 
+         var zoneName = info.GetArg(1).Trim();
+         if (!_zones.Remove(zoneName))
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Zone introuvable.");
+             return;
+         }
+ 
++        SaveZoneConfigurationForCurrentMap();
+         caller!.PrintToChat($"\x07[DUEL]\x01 Zone '{zoneName}' supprimée.");
+     }
+ 
+     private void CommandZoneList(CCSPlayerController? caller, CommandInfo _)
+     {
+         if (!IsValidPlayer(caller))
+         {
+             return;
+         }
+ 
+         if (_zones.Count == 0)
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Aucune zone configurée.");
+             return;
+         }
+ 
+         foreach (var zone in _zones.Values.OrderBy(z => z.Name))
+         {
+             caller!.PrintToChat($"\x07[DUEL]\x01 Zone {zone.Name} - A:{zone.TeamACount}/3 B:{zone.TeamBCount}/3 (prête: {(zone.IsReady ? "oui" : "non")})");
+         }
+     }
+ 
+     private void CommandZoneSetSpawn(CCSPlayerController? caller, CommandInfo info)
+     {
+         if (!IsValidPlayer(caller))
+         {
+             return;
+         }
+ 
+-        if (info.ArgCount < 7)
++        if (info.ArgCount < 4)
+         {
+-            caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> <x> <y> <z> [pitch] [yaw] [roll]");
++            caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> [x y z] [pitch] [yaw] [roll]");
++            caller.PrintToChat("\x07[DUEL]\x01 Sans coordonnées, votre position actuelle est utilisée automatiquement.");
+             return;
+         }
+ 
+         var zoneName = info.GetArg(1).Trim();
+         if (!_zones.TryGetValue(zoneName, out var zone))
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Zone introuvable. Créez-la d'abord avec !duel_zone_create.");
+             return;
+         }
+ 
+         var team = ParseTeam(info.GetArg(2));
+         if (team == DuelTeam.None)
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Team invalide: utilisez a ou b.");
+             return;
+         }
+ 
+         if (!int.TryParse(info.GetArg(3), out var slot) || slot is < 1 or > 3)
+         {
+             caller!.PrintToChat("\x07[DUEL]\x01 Slot invalide: utilisez 1, 2 ou 3.");
+             return;
+         }
+ 
+-        if (!TryReadFloat(info.GetArg(4), out var x) ||
+-            !TryReadFloat(info.GetArg(5), out var y) ||
+-            !TryReadFloat(info.GetArg(6), out var z))
++        float x;
++        float y;
++        float z;
++        float pitch;
++        float yaw;
++        float roll;
++
++        if (info.ArgCount >= 7)
+         {
+-            caller!.PrintToChat("\x07[DUEL]\x01 Coordonnées invalides.");
+-            return;
++            if (!TryReadFloat(info.GetArg(4), out x) ||
++                !TryReadFloat(info.GetArg(5), out y) ||
++                !TryReadFloat(info.GetArg(6), out z))
++            {
++                caller!.PrintToChat("\x07[DUEL]\x01 Coordonnées invalides.");
++                return;
++            }
++
++            pitch = info.ArgCount >= 8 && TryReadFloat(info.GetArg(7), out var p) ? p : 0f;
++            yaw = info.ArgCount >= 9 && TryReadFloat(info.GetArg(8), out var yw) ? yw : 0f;
++            roll = info.ArgCount >= 10 && TryReadFloat(info.GetArg(9), out var rl) ? rl : 0f;
+         }
++        else
++        {
++            if (!TryGetPlayerCurrentSpawn(caller!, out var currentSpawn))
++            {
++                caller!.PrintToChat("\x07[DUEL]\x01 Impossible de lire votre position actuelle.");
++                return;
++            }
+ 
+-        var pitch = info.ArgCount >= 8 && TryReadFloat(info.GetArg(7), out var p) ? p : 0f;
+-        var yaw = info.ArgCount >= 9 && TryReadFloat(info.GetArg(8), out var yw) ? yw : 0f;
+-        var roll = info.ArgCount >= 10 && TryReadFloat(info.GetArg(9), out var rl) ? rl : 0f;
++            x = currentSpawn.X;
++            y = currentSpawn.Y;
++            z = currentSpawn.Z;
++            pitch = currentSpawn.Pitch;
++            yaw = currentSpawn.Yaw;
++            roll = currentSpawn.Roll;
++        }
+ 
+         zone.SetSpawn(team, slot - 1, new DuelSpawn(x, y, z, pitch, yaw, roll));
++        SaveZoneConfigurationForCurrentMap();
+         caller!.PrintToChat($"\x07[DUEL]\x01 Spawn défini: zone {zoneName}, team {info.GetArg(2).ToUpperInvariant()}, slot {slot}.");
+     }
+ 
+     private void ShowWeaponChoices(CCSPlayerController? caller)
+     {
+         for (var i = 0; i < AllowedWeapons.Length; i++)
+         {
+             caller?.PrintToChat($"\x07[DUEL]\x01 Arme {i + 1}: {AllowedWeapons[i]}");
+         }
+     }
+ 
+     private static bool TryParseWeapon(string raw, out string weapon)
+     {
+         weapon = string.Empty;
+ 
+         if (int.TryParse(raw, out var idx) && idx >= 1 && idx <= AllowedWeapons.Length)
+         {
+             weapon = AllowedWeapons[idx - 1];
+             return true;
+         }
+ 
+         var normalized = raw.Trim().ToLowerInvariant();
+         var match = AllowedWeapons.FirstOrDefault(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+         if (match is null)
+         {
+@@ -666,85 +766,296 @@ public sealed class DuelPlugin : BasePlugin
  
      private CCSPlayerController? FindPlayer(string fragment)
      {
@@ -236,6 +574,127 @@ index dde60fc0d9f9d8ef37c097ea5972b9a4f1727933..7a220b9997d6199cc74f48b575501fc7
 +        return Utilities.GetPlayers().FirstOrDefault(p => p is { IsValid: true, IsBot: true, PawnIsAlive: true });
 +    }
 +
++    private void SaveZoneConfigurationForCurrentMap()
++    {
++        try
++        {
++            var configPath = GetZoneConfigPathForCurrentMap();
++            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
++
++            var file = new ZoneConfigFile
++            {
++                MapName = GetCurrentMapName(),
++                Zones = _zones.Values
++                    .OrderBy(z => z.Name, StringComparer.OrdinalIgnoreCase)
++                    .Select(zone => new ZoneConfigEntry
++                    {
++                        Name = zone.Name,
++                        TeamASpawns = zone.TeamASpawns.Select(ToDto).ToArray(),
++                        TeamBSpawns = zone.TeamBSpawns.Select(ToDto).ToArray()
++                    })
++                    .ToList()
++            };
++
++            var json = JsonSerializer.Serialize(file, JsonOptions);
++            File.WriteAllText(configPath, json);
++        }
++        catch (Exception ex)
++        {
++            Console.WriteLine($"[DuelCs2] Erreur sauvegarde des zones: {ex.Message}");
++        }
++    }
++
++    private void LoadZoneConfigurationForCurrentMap()
++    {
++        _zones.Clear();
++
++        try
++        {
++            var configPath = GetZoneConfigPathForCurrentMap();
++            if (!File.Exists(configPath))
++            {
++                return;
++            }
++
++            var json = File.ReadAllText(configPath);
++            var file = JsonSerializer.Deserialize<ZoneConfigFile>(json, JsonOptions);
++            if (file?.Zones is null)
++            {
++                return;
++            }
++
++            foreach (var zoneEntry in file.Zones)
++            {
++                if (string.IsNullOrWhiteSpace(zoneEntry.Name))
++                {
++                    continue;
++                }
++
++                var zone = new DuelZone(zoneEntry.Name);
++
++                ApplySavedSpawns(zone.TeamASpawns, zoneEntry.TeamASpawns);
++                ApplySavedSpawns(zone.TeamBSpawns, zoneEntry.TeamBSpawns);
++
++                _zones[zone.Name] = zone;
++            }
++        }
++        catch (Exception ex)
++        {
++            Console.WriteLine($"[DuelCs2] Erreur chargement des zones: {ex.Message}");
++        }
++    }
++
++    private static void ApplySavedSpawns(DuelSpawn?[] target, DuelSpawnDto?[]? source)
++    {
++        if (source is null)
++        {
++            return;
++        }
++
++        for (var i = 0; i < target.Length && i < source.Length; i++)
++        {
++            var dto = source[i];
++            if (!dto.HasValue)
++            {
++                continue;
++            }
++
++            var value = dto.Value;
++            target[i] = new DuelSpawn(value.X, value.Y, value.Z, value.Pitch, value.Yaw, value.Roll);
++        }
++    }
++
++    private static DuelSpawnDto? ToDto(DuelSpawn? spawn)
++    {
++        if (spawn is null)
++        {
++            return null;
++        }
++
++        var value = spawn.Value;
++        return new DuelSpawnDto(value.X, value.Y, value.Z, value.Pitch, value.Yaw, value.Roll);
++    }
++
++    private static string GetCurrentMapName()
++    {
++        var mapNameProperty = typeof(Server).GetProperty("MapName", BindingFlags.Static | BindingFlags.Public);
++        var rawName = mapNameProperty?.GetValue(null) as string;
++        var mapName = string.IsNullOrWhiteSpace(rawName) ? "unknown_map" : rawName.Trim();
++
++        foreach (var invalid in Path.GetInvalidFileNameChars())
++        {
++            mapName = mapName.Replace(invalid, '_');
++        }
++
++        return mapName;
++    }
++
++    private static string GetZoneConfigPathForCurrentMap()
++    {
++        var folder = Path.Combine(AppContext.BaseDirectory, "configs", "DuelCs2", "zones");
++        return Path.Combine(folder, $"{GetCurrentMapName()}.json");
++    }
++
      private bool IsInDuel(CCSPlayerController player)
      {
          return _playersInDuel.Contains(player.SteamID);
@@ -261,3 +720,123 @@ index dde60fc0d9f9d8ef37c097ea5972b9a4f1727933..7a220b9997d6199cc74f48b575501fc7
          if (player is null || !player.IsValid || player.IsBot)
          {
              return false;
+         }
+ 
+         return !requireAlive || player.PawnIsAlive;
+     }
+ 
+     private static bool TryReadFloat(string raw, out float value)
+     {
+         return float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+     }
+ 
++    private static bool TryGetPlayerCurrentSpawn(CCSPlayerController player, out DuelSpawn spawn)
++    {
++        spawn = default;
++
++        var pawn = player.PlayerPawn?.Value;
++        if (pawn is null)
++        {
++            return false;
++        }
++
++        var bodyComponent = GetPropertyValue(pawn, "CBodyComponent");
++        var sceneNode = bodyComponent is null ? null : GetPropertyValue(bodyComponent, "SceneNode");
++
++        var origin = TryReadVectorFromObject(pawn, "AbsOrigin")
++            ?? TryReadVectorFromObject(bodyComponent, "AbsOrigin")
++            ?? TryReadVectorFromObject(sceneNode, "AbsOrigin");
++
++        if (origin is null)
++        {
++            return false;
++        }
++
++        var angles = TryReadQAngleFromObject(player, "Pawn")
++            ?? TryReadQAngleFromObject(player, "EyeAngles")
++            ?? TryReadQAngleFromObject(player, "V_angle")
++            ?? TryReadQAngleFromObject(pawn, "EyeAngles")
++            ?? new QAngle(0, 0, 0);
++
++        spawn = new DuelSpawn(origin.X, origin.Y, origin.Z, angles.X, angles.Y, angles.Z);
++        return true;
++    }
++
++    private static Vector? TryReadVectorFromObject(object? instance, string propertyName)
++    {
++        if (instance is null)
++        {
++            return null;
++        }
++
++        var value = GetPropertyValue(instance, propertyName);
++        if (value is Vector vector)
++        {
++            return vector;
++        }
++
++        return null;
++    }
++
++    private static QAngle? TryReadQAngleFromObject(object? instance, string propertyName)
++    {
++        if (instance is null)
++        {
++            return null;
++        }
++
++        var value = GetPropertyValue(instance, propertyName);
++        if (value is QAngle angle)
++        {
++            return angle;
++        }
++
++        return null;
++    }
++
++    private static object? GetPropertyValue(object instance, string propertyName)
++    {
++        var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
++        return property?.GetValue(instance);
++    }
++
++    private sealed class ZoneConfigFile
++    {
++        public string MapName { get; set; } = string.Empty;
++        public List<ZoneConfigEntry> Zones { get; set; } = new();
++    }
++
++    private sealed class ZoneConfigEntry
++    {
++        public string Name { get; set; } = string.Empty;
++        public DuelSpawnDto?[] TeamASpawns { get; set; } = Array.Empty<DuelSpawnDto?>();
++        public DuelSpawnDto?[] TeamBSpawns { get; set; } = Array.Empty<DuelSpawnDto?>();
++    }
++
++    private readonly record struct DuelSpawnDto(float X, float Y, float Z, float Pitch, float Yaw, float Roll);
++
+     private readonly record struct DuelRequest(ulong ChallengerSteamId, ulong TargetSteamId, DuelFormat Format, string ZoneName);
+ 
+     private readonly record struct DuelSpawn(float X, float Y, float Z, float Pitch, float Yaw, float Roll);
+ 
+     private sealed class DuelZone
+     {
+         public DuelZone(string name)
+         {
+             Name = name;
+         }
+ 
+         public string Name { get; }
+         public DuelSpawn?[] TeamASpawns { get; } = new DuelSpawn?[3];
+         public DuelSpawn?[] TeamBSpawns { get; } = new DuelSpawn?[3];
+ 
+         public int TeamACount => TeamASpawns.Count(s => s is not null);
+         public int TeamBCount => TeamBSpawns.Count(s => s is not null);
+         public bool IsReady => TeamACount == 3 && TeamBCount == 3;
+ 
+         public void SetSpawn(DuelTeam team, int index, DuelSpawn spawn)
+         {
+             if (team == DuelTeam.TeamA)
+             {
+                 TeamASpawns[index] = spawn;
+                 return;
