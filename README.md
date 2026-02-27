@@ -64,6 +64,7 @@ Armes disponibles par défaut:
 
 ## Commandes duel classique
 
+- `!duel` : si vous êtes seul joueur vivant, le plugin crée automatiquement un bot et lance un `1v1`.
 - `!duel <nom>` : envoie une demande de duel (sur une zone prête choisie aléatoirement).
 - `!duel_accept` : accepte la demande reçue et démarre le duel.
 - `!duel_deny` : refuse la demande reçue.
