@@ -121,6 +121,13 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
+        var availablePlayers = GetAvailablePlayers();
+        if (availablePlayers.Count == 1 && availablePlayers[0].SteamID == caller!.SteamID)
+        {
+            StartSoloDuelWithBot(caller);
+            return;
+        }
+
         if (info.ArgCount < 2)
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel <nom>.");
@@ -152,7 +159,7 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        var availableCount = GetAvailablePlayers().Count;
+        var availableCount = availablePlayers.Count;
         var format = DuelFormatExtensions.SelectForPlayerCount(availableCount);
         if (format is null)
         {
@@ -172,6 +179,56 @@ public sealed class DuelPlugin : BasePlugin
         target.PrintToChat($"\x07[DUEL]\x01 {caller.PlayerName} vous défie ! Format: {DuelFormatExtensions.Label(format.Value)}, zone: {zoneName}. Tapez !duel_accept ou !duel_deny.");
 
         AddTimer(DuelRequestTimeoutSeconds, () => ExpireRequest(target.SteamID), TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
+    private void StartSoloDuelWithBot(CCSPlayerController caller)
+    {
+        if (!TryPickReadyZone(out var zoneName))
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Aucune zone prête. Créez une zone puis définissez 3 spawns pour team A et 3 pour team B.");
+            return;
+        }
+
+        var bot = FindAliveBot();
+        if (bot is not null)
+        {
+            StartDuelRound(DuelFormat.OneVsOne, zoneName, new List<CCSPlayerController> { caller }, new List<CCSPlayerController> { bot }, isRematch: false);
+            return;
+        }
+
+        caller.PrintToChat("\x07[DUEL]\x01 Vous êtes seul: création d'un bot adverse...");
+        Server.ExecuteCommand("bot_add");
+
+        AddTimer(1.0f, () => TryStartSoloDuelAfterBotSpawn(caller.SteamID, zoneName), TimerFlags.STOP_ON_MAPCHANGE);
+    }
+
+    private void TryStartSoloDuelAfterBotSpawn(ulong playerSteamId, string zoneName)
+    {
+        var caller = FindPlayer(playerSteamId);
+        if (!IsValidPlayer(caller, requireAlive: true) || caller is null)
+        {
+            return;
+        }
+
+        if (IsInDuel(caller))
+        {
+            return;
+        }
+
+        var bot = FindAliveBot();
+        if (bot is null)
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Impossible de créer un bot pour le duel (vérifiez la configuration du serveur).");
+            return;
+        }
+
+        if (!_zones.TryGetValue(zoneName, out var zone) || !zone.IsReady)
+        {
+            caller.PrintToChat("\x07[DUEL]\x01 Zone du duel indisponible ou incomplète.");
+            return;
+        }
+
+        StartDuelRound(DuelFormat.OneVsOne, zoneName, new List<CCSPlayerController> { caller }, new List<CCSPlayerController> { bot }, isRematch: false);
     }
 
     private void CommandAccept(CCSPlayerController? caller, CommandInfo _)
@@ -328,9 +385,10 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        if (info.ArgCount < 7)
+        if (info.ArgCount < 4)
         {
-            caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> <x> <y> <z> [pitch] [yaw] [roll]");
+            caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> [x y z] [pitch] [yaw] [roll]");
+            caller.PrintToChat("\x07[DUEL]\x01 Sans coordonnées, votre position actuelle est utilisée automatiquement.");
             return;
         }
 
@@ -354,17 +412,42 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        if (!TryReadFloat(info.GetArg(4), out var x) ||
-            !TryReadFloat(info.GetArg(5), out var y) ||
-            !TryReadFloat(info.GetArg(6), out var z))
-        {
-            caller!.PrintToChat("\x07[DUEL]\x01 Coordonnées invalides.");
-            return;
-        }
+        float x;
+        float y;
+        float z;
+        float pitch;
+        float yaw;
+        float roll;
 
-        var pitch = info.ArgCount >= 8 && TryReadFloat(info.GetArg(7), out var p) ? p : 0f;
-        var yaw = info.ArgCount >= 9 && TryReadFloat(info.GetArg(8), out var yw) ? yw : 0f;
-        var roll = info.ArgCount >= 10 && TryReadFloat(info.GetArg(9), out var rl) ? rl : 0f;
+        if (info.ArgCount >= 7)
+        {
+            if (!TryReadFloat(info.GetArg(4), out x) ||
+                !TryReadFloat(info.GetArg(5), out y) ||
+                !TryReadFloat(info.GetArg(6), out z))
+            {
+                caller!.PrintToChat("\x07[DUEL]\x01 Coordonnées invalides.");
+                return;
+            }
+
+            pitch = info.ArgCount >= 8 && TryReadFloat(info.GetArg(7), out var p) ? p : 0f;
+            yaw = info.ArgCount >= 9 && TryReadFloat(info.GetArg(8), out var yw) ? yw : 0f;
+            roll = info.ArgCount >= 10 && TryReadFloat(info.GetArg(9), out var rl) ? rl : 0f;
+        }
+        else
+        {
+            if (!TryGetPlayerCurrentSpawn(caller!, out var currentSpawn))
+            {
+                caller!.PrintToChat("\x07[DUEL]\x01 Impossible de lire votre position actuelle.");
+                return;
+            }
+
+            x = currentSpawn.X;
+            y = currentSpawn.Y;
+            z = currentSpawn.Z;
+            pitch = currentSpawn.Pitch;
+            yaw = currentSpawn.Yaw;
+            roll = currentSpawn.Roll;
+        }
 
         zone.SetSpawn(team, slot - 1, new DuelSpawn(x, y, z, pitch, yaw, roll));
         caller!.PrintToChat($"\x07[DUEL]\x01 Spawn défini: zone {zoneName}, team {info.GetArg(2).ToUpperInvariant()}, slot {slot}.");
@@ -688,6 +771,11 @@ public sealed class DuelPlugin : BasePlugin
         return Utilities.GetPlayers().FirstOrDefault(p => IsValidPlayer(p) && p.SteamID == steamId);
     }
 
+    private static CCSPlayerController? FindAliveBot()
+    {
+        return Utilities.GetPlayers().FirstOrDefault(p => p is { IsValid: true, IsBot: true, PawnIsAlive: true });
+    }
+
     private bool IsInDuel(CCSPlayerController player)
     {
         return _playersInDuel.Contains(player.SteamID);
@@ -721,6 +809,76 @@ public sealed class DuelPlugin : BasePlugin
     private static bool TryReadFloat(string raw, out float value)
     {
         return float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryGetPlayerCurrentSpawn(CCSPlayerController player, out DuelSpawn spawn)
+    {
+        spawn = default;
+
+        var pawn = player.PlayerPawn?.Value;
+        if (pawn is null)
+        {
+            return false;
+        }
+
+        var bodyComponent = GetPropertyValue(pawn, "CBodyComponent");
+        var sceneNode = bodyComponent is null ? null : GetPropertyValue(bodyComponent, "SceneNode");
+
+        var origin = TryReadVectorFromObject(pawn, "AbsOrigin")
+            ?? TryReadVectorFromObject(bodyComponent, "AbsOrigin")
+            ?? TryReadVectorFromObject(sceneNode, "AbsOrigin");
+
+        if (origin is null)
+        {
+            return false;
+        }
+
+        var angles = TryReadQAngleFromObject(player, "Pawn")
+            ?? TryReadQAngleFromObject(player, "EyeAngles")
+            ?? TryReadQAngleFromObject(player, "V_angle")
+            ?? TryReadQAngleFromObject(pawn, "EyeAngles")
+            ?? new QAngle(0, 0, 0);
+
+        spawn = new DuelSpawn(origin.X, origin.Y, origin.Z, angles.X, angles.Y, angles.Z);
+        return true;
+    }
+
+    private static Vector? TryReadVectorFromObject(object? instance, string propertyName)
+    {
+        if (instance is null)
+        {
+            return null;
+        }
+
+        var value = GetPropertyValue(instance, propertyName);
+        if (value is Vector vector)
+        {
+            return vector;
+        }
+
+        return null;
+    }
+
+    private static QAngle? TryReadQAngleFromObject(object? instance, string propertyName)
+    {
+        if (instance is null)
+        {
+            return null;
+        }
+
+        var value = GetPropertyValue(instance, propertyName);
+        if (value is QAngle angle)
+        {
+            return angle;
+        }
+
+        return null;
+    }
+
+    private static object? GetPropertyValue(object instance, string propertyName)
+    {
+        var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(instance);
     }
 
     private readonly record struct DuelRequest(ulong ChallengerSteamId, ulong TargetSteamId, DuelFormat Format, string ZoneName);
