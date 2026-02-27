@@ -401,31 +401,10 @@ public sealed class DuelPlugin : BasePlugin
             return;
         }
 
-        if (info.ArgCount < 3)
+        if (info.ArgCount < 4)
         {
             caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> [x y z] [pitch] [yaw] [roll]");
             caller.PrintToChat("\x07[DUEL]\x01 Sans coordonnées, votre position actuelle est utilisée automatiquement.");
-            return;
-        }
-
-        var argumentOffset = 1;
-        var zoneName = info.GetArg(argumentOffset).Trim();
-
-        if (!_zones.ContainsKey(zoneName))
-        {
-            var shiftedZoneName = info.GetArg(0).Trim();
-            if (_zones.ContainsKey(shiftedZoneName))
-            {
-                argumentOffset = 0;
-                zoneName = shiftedZoneName;
-            }
-        }
-
-        bool HasArg(int index) => info.ArgCount >= index + 1;
-
-        if (!HasArg(argumentOffset + 2))
-        {
-            caller!.PrintToChat("\x07[DUEL]\x01 Usage: !duel_zone_setspawn <zone> <a|b> <1|2|3> [x y z] [pitch] [yaw] [roll]");
             return;
         }
 
@@ -455,19 +434,19 @@ public sealed class DuelPlugin : BasePlugin
         float yaw;
         float roll;
 
-        if (HasArg(argumentOffset + 5))
+        if (info.ArgCount >= 7)
         {
-            if (!TryReadFloat(info.GetArg(argumentOffset + 3), out x) ||
-                !TryReadFloat(info.GetArg(argumentOffset + 4), out y) ||
-                !TryReadFloat(info.GetArg(argumentOffset + 5), out z))
+            if (!TryReadFloat(info.GetArg(4), out x) ||
+                !TryReadFloat(info.GetArg(5), out y) ||
+                !TryReadFloat(info.GetArg(6), out z))
             {
                 caller!.PrintToChat("\x07[DUEL]\x01 Coordonnées invalides.");
                 return;
             }
 
-            pitch = HasArg(argumentOffset + 6) && TryReadFloat(info.GetArg(argumentOffset + 6), out var p) ? p : 0f;
-            yaw = HasArg(argumentOffset + 7) && TryReadFloat(info.GetArg(argumentOffset + 7), out var yw) ? yw : 0f;
-            roll = HasArg(argumentOffset + 8) && TryReadFloat(info.GetArg(argumentOffset + 8), out var rl) ? rl : 0f;
+            pitch = info.ArgCount >= 8 && TryReadFloat(info.GetArg(7), out var p) ? p : 0f;
+            yaw = info.ArgCount >= 9 && TryReadFloat(info.GetArg(8), out var yw) ? yw : 0f;
+            roll = info.ArgCount >= 10 && TryReadFloat(info.GetArg(9), out var rl) ? rl : 0f;
         }
         else
         {
@@ -487,7 +466,7 @@ public sealed class DuelPlugin : BasePlugin
 
         zone.SetSpawn(team, slot - 1, new DuelSpawn(x, y, z, pitch, yaw, roll));
         SaveZoneConfigurationForCurrentMap();
-        caller!.PrintToChat($"\x07[DUEL]\x01 Spawn défini: zone {zoneName}, team {info.GetArg(argumentOffset + 1).ToUpperInvariant()}, slot {slot}.");
+        caller!.PrintToChat($"\x07[DUEL]\x01 Spawn défini: zone {zoneName}, team {info.GetArg(2).ToUpperInvariant()}, slot {slot}.");
     }
 
     private void ShowWeaponChoices(CCSPlayerController? caller)
@@ -813,127 +792,6 @@ public sealed class DuelPlugin : BasePlugin
         return Utilities.GetPlayers().FirstOrDefault(p => p is { IsValid: true, IsBot: true, PawnIsAlive: true });
     }
 
-    private void SaveZoneConfigurationForCurrentMap()
-    {
-        try
-        {
-            var configPath = GetZoneConfigPathForCurrentMap();
-            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
-
-            var file = new ZoneConfigFile
-            {
-                MapName = GetCurrentMapName(),
-                Zones = _zones.Values
-                    .OrderBy(z => z.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(zone => new ZoneConfigEntry
-                    {
-                        Name = zone.Name,
-                        TeamASpawns = zone.TeamASpawns.Select(ToDto).ToArray(),
-                        TeamBSpawns = zone.TeamBSpawns.Select(ToDto).ToArray()
-                    })
-                    .ToList()
-            };
-
-            var json = JsonSerializer.Serialize(file, JsonOptions);
-            File.WriteAllText(configPath, json);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DuelCs2] Erreur sauvegarde des zones: {ex.Message}");
-        }
-    }
-
-    private void LoadZoneConfigurationForCurrentMap()
-    {
-        _zones.Clear();
-
-        try
-        {
-            var configPath = GetZoneConfigPathForCurrentMap();
-            if (!File.Exists(configPath))
-            {
-                return;
-            }
-
-            var json = File.ReadAllText(configPath);
-            var file = JsonSerializer.Deserialize<ZoneConfigFile>(json, JsonOptions);
-            if (file?.Zones is null)
-            {
-                return;
-            }
-
-            foreach (var zoneEntry in file.Zones)
-            {
-                if (string.IsNullOrWhiteSpace(zoneEntry.Name))
-                {
-                    continue;
-                }
-
-                var zone = new DuelZone(zoneEntry.Name);
-
-                ApplySavedSpawns(zone.TeamASpawns, zoneEntry.TeamASpawns);
-                ApplySavedSpawns(zone.TeamBSpawns, zoneEntry.TeamBSpawns);
-
-                _zones[zone.Name] = zone;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DuelCs2] Erreur chargement des zones: {ex.Message}");
-        }
-    }
-
-    private static void ApplySavedSpawns(DuelSpawn?[] target, DuelSpawnDto?[]? source)
-    {
-        if (source is null)
-        {
-            return;
-        }
-
-        for (var i = 0; i < target.Length && i < source.Length; i++)
-        {
-            var dto = source[i];
-            if (!dto.HasValue)
-            {
-                continue;
-            }
-
-            var value = dto.Value;
-            target[i] = new DuelSpawn(value.X, value.Y, value.Z, value.Pitch, value.Yaw, value.Roll);
-        }
-    }
-
-    private static DuelSpawnDto? ToDto(DuelSpawn? spawn)
-    {
-        if (spawn is null)
-        {
-            return null;
-        }
-
-        var value = spawn.Value;
-        return new DuelSpawnDto(value.X, value.Y, value.Z, value.Pitch, value.Yaw, value.Roll);
-    }
-
-    private static string GetCurrentMapName()
-    {
-        var mapNameProperty = typeof(Server).GetProperty("MapName", BindingFlags.Static | BindingFlags.Public);
-        var rawName = mapNameProperty?.GetValue(null) as string;
-        var mapName = string.IsNullOrWhiteSpace(rawName) ? "unknown_map" : rawName.Trim();
-
-        foreach (var invalid in Path.GetInvalidFileNameChars())
-        {
-            mapName = mapName.Replace(invalid, '_');
-        }
-
-        return mapName;
-    }
-
-    private static string GetZoneConfigPathForCurrentMap()
-    {
-        var folder = Path.Combine(AppContext.BaseDirectory, "configs", "DuelCs2", "zones");
-        return Path.Combine(folder, $"{GetCurrentMapName()}.json");
-    }
-
     private bool IsInDuel(CCSPlayerController player)
     {
         return _playersInDuel.Contains(player.SteamID);
@@ -1038,21 +896,6 @@ public sealed class DuelPlugin : BasePlugin
         var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         return property?.GetValue(instance);
     }
-
-    private sealed class ZoneConfigFile
-    {
-        public string MapName { get; set; } = string.Empty;
-        public List<ZoneConfigEntry> Zones { get; set; } = new();
-    }
-
-    private sealed class ZoneConfigEntry
-    {
-        public string Name { get; set; } = string.Empty;
-        public DuelSpawnDto?[] TeamASpawns { get; set; } = Array.Empty<DuelSpawnDto?>();
-        public DuelSpawnDto?[] TeamBSpawns { get; set; } = Array.Empty<DuelSpawnDto?>();
-    }
-
-    private readonly record struct DuelSpawnDto(float X, float Y, float Z, float Pitch, float Yaw, float Roll);
 
     private readonly record struct DuelRequest(ulong ChallengerSteamId, ulong TargetSteamId, DuelFormat Format, string ZoneName);
 
