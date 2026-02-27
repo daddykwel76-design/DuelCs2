@@ -1,0 +1,59 @@
+name: Auto Build & Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Publish
+        run: dotnet publish -c Release -o publish --no-build
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          git fetch --tags
+          latestTag=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$latestTag" ]; then
+            echo "newTag=v1.0.0" >> $GITHUB_OUTPUT
+          else
+            version=${latestTag#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            patch=$((patch + 1))
+            echo "newTag=v$major.$minor.$patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag ${{ steps.get_tag.outputs.newTag }}
+          git push origin ${{ steps.get_tag.outputs.newTag }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.newTag }}
+          name: Release ${{ steps.get_tag.outputs.newTag }}
+          files: publish/DuelCs2.dll
