@@ -17,12 +17,14 @@ La configuration commence par la **création d'une zone**, puis la définition d
 
 1. `!duel_zone_create <nom_zone>`
 2. Définir les spawns de la zone:
-   - `!duel_zone_setspawn <nom_zone> a 1 <x> <y> <z> [pitch] [yaw] [roll]`
-   - `!duel_zone_setspawn <nom_zone> a 2 <x> <y> <z> [pitch] [yaw] [roll]`
-   - `!duel_zone_setspawn <nom_zone> a 3 <x> <y> <z> [pitch] [yaw] [roll]`
-   - `!duel_zone_setspawn <nom_zone> b 1 <x> <y> <z> [pitch] [yaw] [roll]`
-   - `!duel_zone_setspawn <nom_zone> b 2 <x> <y> <z> [pitch] [yaw] [roll]`
-   - `!duel_zone_setspawn <nom_zone> b 3 <x> <y> <z> [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> a 1 [x y z] [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> a 2 [x y z] [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> a 3 [x y z] [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> b 1 [x y z] [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> b 2 [x y z] [pitch] [yaw] [roll]`
+   - `!duel_zone_setspawn <nom_zone> b 3 [x y z] [pitch] [yaw] [roll]`
+
+   Si `x y z` ne sont pas fournis, le plugin utilise automatiquement votre position et votre orientation actuelles.
 
 Commandes utiles:
 
